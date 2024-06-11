@@ -145,8 +145,7 @@ const gltf = {
     }
 
     _getBuffer(accessor) {
-      return this.bufferProvider
-        .getBuffer(this.accessors[accessor]);
+      return this.bufferProvider.getBuffer(this.accessors[accessor]);
     }
   },
 
@@ -192,61 +191,6 @@ const gltf = {
   },
 };
 
-// gltf.loadScene('tank')
-//   .then(scene => render(scene));
-
-// function render(scene) {
-//   const canvas = document.getElementById('canvas');
-//   const gl = canvas.getContext('webgl');
-//   const program = getProgram(gl);
-
-//   const { width, height } = canvas;
-//   const { mat4 } = glMatrix;
-
-//   const pMatrix = mat4.create();
-//   const mvMatrix = mat4.create();
-//   const invMvMatrix = mat4.create();
-//   const nMatrix = mat4.create();
-
-//   gl.clearColor(0.0, 0.0, 0.14, 1.0);
-//   gl.enable(gl.DEPTH_TEST);
-//   gl.useProgram(program);
-
-//   (function tick(elapsedTime) {
-//     gl.viewport(0, 0, width, height);
-//     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-//     mat4.perspective(pMatrix, 1.04, width / height, 0.1, 1000.0);
-//     gl.uniformMatrix4fv(program.u_PMatrix, false, pMatrix);
-
-//     setLightUniforms(gl, program);
-//     setMaterialUniforms(gl, program);
-
-//     for (const { trs, mesh } of scene) {
-//       mat4.identity(mvMatrix);
-//       mat4.translate(mvMatrix, mvMatrix, [0.0, -0.8, -10.0]);
-//       mat4.rotateY(mvMatrix, mvMatrix, degToRad(elapsedTime * 0.08));
-
-//       mat4.mul(mvMatrix, mvMatrix, trs.calcMatrix(mat4));
-//       gl.uniformMatrix4fv(program.u_MVMatrix, false, mvMatrix);
-
-//       mat4.invert(invMvMatrix, mvMatrix);
-//       mat4.transpose(nMatrix, invMvMatrix);
-//       gl.uniformMatrix4fv(program.u_NMatrix, false, nMatrix);
-
-//       for (const { attrs, indexBuffer } of mesh) {
-//         setAttributes(gl, program, attrs);
-
-//         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer.buffer(gl));
-//         gl.drawElements(gl.TRIANGLES, indexBuffer.count, 
-//           indexBuffer.componentType, 0);
-//       }
-//     }
-
-//     // requestAnimationFrame(tick);
-//   })(0);
-// }
-
 // -----------------
 
 class Scene {
@@ -273,6 +217,23 @@ class Scene {
   }
 
   render(appCtx, deltaTime) {
+    // --------
+    const { canvas: { width, height }, gl, program, matrix } = appCtx;
+
+    gl.clearColor(0.0, 0.0, 0.14, 1.0);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(program);
+
+    gl.viewport(0, 0, width, height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    mat4.perspective(matrix.projection, 1.04, width / height, 0.1, 1000.0);
+    gl.uniformMatrix4fv(program.u_PMatrix, false, matrix.projection);
+
+    program.setLightUniforms();
+    program.setMaterialUniforms();
+    // --------
+
     for (const actor of this.actors) {
       actor.render(appCtx, deltaTime);
     }
@@ -303,11 +264,16 @@ class Mesh extends Actor {
 
   render({ gl, program, matrix }) {
     for (const { trs, mesh } of this.nodes) {
-      mat4.mul(matrix.modeView, matrix.modeView, trs.calcMatrix());
-      gl.uniformMatrix4fv(program.u_MVMatrix, false, matrix.modeView);
+      // --------
+      mat4.identity(matrix.modelView);
+      mat4.translate(matrix.modelView, matrix.modelView, [0.0, -0.8, -10.0]);
+      // --------
 
-      mat4.invert(matrix.modeView, matrix.modeView);
-      mat4.transpose(matrix.normal, matrix.modeView);
+      mat4.mul(matrix.modelView, matrix.modelView, trs.calcMatrix());
+      gl.uniformMatrix4fv(program.u_MVMatrix, false, matrix.modelView);
+
+      mat4.invert(matrix.modelView, matrix.modelView);
+      mat4.transpose(matrix.normal, matrix.modelView);
       gl.uniformMatrix4fv(program.u_NMatrix, false, matrix.normal);
 
       for (const { attrs, indexBuffer } of mesh) {
@@ -406,6 +372,9 @@ function getProgram(gl) {
   return p;
 }
 
-// app.run();
+// -----------------
 
-// -------------
+gltf.loadScene('tank').then(scene => {
+  const tank = new Mesh('tank', Array.from(scene));
+  app.run(new Scene([tank]));
+});
