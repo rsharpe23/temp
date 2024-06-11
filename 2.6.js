@@ -1,3 +1,29 @@
+class TRS {
+  constructor({ translation, rotation, scale }, parent) {
+    this.translation = translation ?? [0, 0, 0];
+    this.rotation = rotation ?? [0, 0, 0, 1];
+    this.scale = scale ?? [1, 1, 1];
+    this.parent = parent;
+  }
+
+  calcMatrix(mat4) {
+    const mat = this._calcMatrix(mat4);
+    if (this.parent) {
+      mat4.mul(mat, this.parent.calcMatrix(mat4), mat);
+    }
+
+    return mat;
+  }
+
+  _calcMatrix(mat4) {
+    const mat = mat4.create();
+    mat4.fromRotationTranslationScale(mat, 
+      this.rotation, this.translation, this.scale);
+
+    return mat;
+  }
+}
+
 const gltf = {
   componentTypesMap: {
     'SCALAR': 1,
@@ -21,31 +47,31 @@ const gltf = {
 
       return new gltf.Scene(nt, meshProvider);
     }
-  
-    traverse(cb) {
-      this.nodeTree.traverse((node, parent) => {
+
+    *[Symbol.iterator]() {
+      yield* this.nodeTree.traverse((node, parent) => {
+        node.trs = new TRS(node, parent?.trs);
         node.mesh = this.meshProvider.getMesh(node);
-        node.trs = new gltf.TRS(node, parent?.trs);
-        cb && cb(node, parent);
+        return node;
       });
     }
   },
   
   NodeTree: class {
-    constructor(parent, children, nodes) {
-      this.parent = parent;
+    constructor(root, children, nodes) {
+      this.root = root;
       this.children = children;
       this.nodes = nodes;
     }
 
-    traverse(cb) {
-      for (const child of this.children) {
-        const { children, ...rest } = this.nodes[child];
-        cb && cb(rest, this.parent);
-
+    *traverse(fn) {
+      for (const node of this.children) {
+        const { children, ...rest } = this.nodes[node];
+        yield fn(rest, this.root);
+        
         if (children) {
-          new gltf.NodeTree(rest, children, this.nodes)
-            .traverse(cb);
+          const nt = new gltf.NodeTree(rest, children, this.nodes);
+          yield* nt.traverse(fn);
         }
       }
     }
@@ -75,7 +101,8 @@ const gltf = {
     }
 
     _getBuffer(accessor) {
-      return this.bufferProvider.getBuffer(this.accessors[accessor]);
+      return this.bufferProvider
+        .getBuffer(this.accessors[accessor]);
     }
   },
 
@@ -91,43 +118,12 @@ const gltf = {
       return { ...rest, buffer, componentsNum };
     }
 
-    _getBuffer({ buffer, byteOffset, byteLength, target }) {
-      return this._getBufferBy(this.buffers[buffer], 
-        byteOffset, byteLength, target);
-    }
-
-    _getBufferBy(buffer, byteOffset, byteLength, target) {
-      const data = new Uint8Array(buffer, byteOffset, byteLength);
+    _getBuffer({ buffer, byteOffset: bo, byteLength: bl, target }) {
+      const data = new Uint8Array(this.buffers[buffer], bo, bl);
       return gl => createBuffer(gl, target, data);
     }
   },
 
-  TRS: class {
-    constructor({ translation, rotation, scale }, parent) {
-      this.translation = translation ?? [0, 0, 0];
-      this.rotation = rotation ?? [0, 0, 0, 1];
-      this.scale = scale ?? [1, 1, 1];
-      this.parent = parent;
-    }
-  
-    calcMatrix(mat4) {
-      const mat = this._calcMatrix(mat4);
-      if (this.parent) {
-        mat4.mul(mat, this.parent.calcMatrix(mat4), mat);
-      }
-  
-      return mat;
-    }
-  
-    _calcMatrix(mat4) {
-      const mat = mat4.create();
-      mat4.fromRotationTranslationScale(mat, 
-        this.rotation, this.translation, this.scale);
-  
-      return mat;
-    }
-  },
-  
   async load(path) {
     const res = await fetch(gltf.getURL(path));
     const data = await res.json();
@@ -183,7 +179,7 @@ function render(scene) {
     setLightUniforms(gl, program);
     setMaterialUniforms(gl, program);
 
-    scene.traverse(({ trs, mesh }) => {
+    for (const { trs, mesh } of scene) {
       mat4.identity(mvMatrix);
       mat4.translate(mvMatrix, mvMatrix, [0.0, -0.8, -10.0]);
       mat4.rotateY(mvMatrix, mvMatrix, degToRad(elapsedTime * 0.08));
@@ -202,9 +198,9 @@ function render(scene) {
         gl.drawElements(gl.TRIANGLES, indexBuffer.count, 
           indexBuffer.componentType, 0);
       }
-    });
+    };
 
-    requestAnimationFrame(tick);
+    // requestAnimationFrame(tick);
   })(0);
 }
 
