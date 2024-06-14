@@ -6,9 +6,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Document</title>
   <link rel="shortcut icon" href="#">
+
+  <style>
+    .fps {
+      position: fixed;
+      color: white;
+      padding-left: 10px;
+      font-size: 14px;
+    }
+  </style>
 </head>
 <body>
-  <canvas id="canvas" width="640" height="480"></canvas>
+  <p class="fps">FPS: 0</p>
+
+  <canvas id="canvas" width="1400" height="720"></canvas>
 
   <script id="shader-vs" type="x-shader/x-vertex">
     attribute vec3 a_Position;
@@ -66,6 +77,7 @@
   </script>
 
   <script src="gl-matrix.js"></script> 
+  <script src="gl-utils.js"></script>
   <script src="math-utils.js"></script>
   <script src="1.8.js"></script>
 </body>

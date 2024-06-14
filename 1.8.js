@@ -76,26 +76,21 @@ const gltf = {
   },
 
   Scene: class {
-    constructor(nodeTree, meshProvider) {
+    constructor(nodeTree, meshParser) {
       this.nodeTree = nodeTree;
-      this.meshProvider = meshProvider;
+      this.meshParser = meshParser;
     }
   
-    static from({ scene, scenes, nodes, 
-      meshes, accessors, bufferViews, buffers }) {
-
-      const nt = new gltf.NodeTree(null, scenes[scene].nodes, nodes);
-
-      const meshProvider = new gltf.MeshProvider(meshes, accessors, 
-        new gltf.BufferProvider(bufferViews, buffers));
-
-      return new gltf.Scene(nt, meshProvider);
+    static from(data) {
+      const nodeTree = gltf.NodeTree.from(data);
+      const meshParser = new gltf.MeshParser(data);
+      return new gltf.Scene(nodeTree, meshParser);
     }
 
     *[Symbol.iterator]() {
       yield* this.nodeTree.traverse((node, parent) => {
         node.trs = new TRS(node, parent?.trs);
-        node.mesh = this.meshProvider.getMesh(node);
+        node.mesh = this.meshParser.parseMesh(node.mesh);
         return node;
       });
     }
@@ -108,62 +103,74 @@ const gltf = {
       this.nodes = nodes;
     }
 
+    static from({ scene, scenes, nodes }) {
+      return new gltf.NodeTree(null, scenes[scene].nodes, nodes);
+    }
+
     *traverse(fn) {
       for (const node of this.children) {
         const { children, ...rest } = this.nodes[node];
         yield fn(rest, this.root);
         
         if (children) {
-          const nt = new gltf.NodeTree(rest, children, this.nodes);
-          yield* nt.traverse(fn);
+          const nodeTree = new gltf.NodeTree(rest, 
+            children, this.nodes);
+
+          yield* nodeTree.traverse(fn);
         }
       }
     }
   },
 
-  MeshProvider: class {
-    constructor(meshes, accessors, bufferProvider) {
+  MeshParser: class {
+    constructor({ meshes, accessors, bufferViews, buffers }) {
       this.meshes = meshes;
       this.accessors = accessors;
-      this.bufferProvider = bufferProvider;
-    }
-
-    getMesh({ mesh }) {
-      return this._getMesh(this.meshes[mesh]);
-    }
-
-    _getMesh({ primitives }) {
-      return primitives.map(prim => ({
-        attrs: Object.entries(prim.attributes)
-          .reduce((attr, [key, value]) => {
-            attr[key] = this._getBuffer(value);
-            return attr;
-          }, {}),
-
-        indexBuffer: this._getBuffer(prim.indices),
-      }));
-    }
-
-    _getBuffer(accessor) {
-      return this.bufferProvider.getBuffer(this.accessors[accessor]);
-    }
-  },
-
-  BufferProvider: class {
-    constructor(bufferViews, buffers) {
       this.bufferViews = bufferViews;
-      this.buffers = buffers; 
+      this.buffers = buffers;
     }
 
-    getBuffer({ bufferView, type, ...rest }) {
-      const buffer = this._getBuffer(this.bufferViews[bufferView]);
-      const componentsPerAttr = gltf.typeSizeMap[type];
-      return { ...rest, buffer, componentsPerAttr };
+    parseMesh(meshIndex) {
+      return this._parseMesh(this.meshes[meshIndex]);
     }
 
-    _getBuffer({ buffer, byteOffset: bo, byteLength: bl, target }) {
-      const data = new Uint8Array(this.buffers[buffer], bo, bl);
-      return gl => glu.createBuffer(gl, target, data);
+    _parseMesh({ name, primitives }) {
+      primitives = primitives.map(p => ({
+        vbo: this._getBuffer(p.attributes['POSITION']),
+        nbo: this._getBuffer(p.attributes['NORMAL']),
+        tbo: this._getBuffer(p.attributes['TEXCOORD_0']),
+        ibo: this._getBuffer(p.indices),
+      }));
+
+      return { name, primitives };
+    }
+
+    _getBuffer(accessorIndex) {
+      return this._parseAccessor(this.accessors[accessorIndex]);
+    }
+
+    _parseAccessor({ bufferView: bv, type, ...rest }) {
+      return { 
+        ...rest, typeSize: gltf.typeSizeMap[type],
+
+        getBuffer(gl, store, key) {
+          const buffer = store[key];
+
+          if (!buffer) {
+            const { data, target } = this._parseBufferView(this.bufferViews[bv]);
+            return store[key] = glu.createBuffer(gl, data, target);
+          }
+  
+          return buffer;
+        },
+      };
+    }
+
+    _parseBufferView({ buffer, byteLength, byteOffset, target }) {
+      const data = new Uint8Array(this.buffers[buffer], 
+        byteOffset, byteLength);
+
+      return { target, data };
     }
   },
 
@@ -216,9 +223,9 @@ class Scene {
     return this.actors.find(actor => actor.name === name);
   }
 
-  render(appCtx, deltaTime) {
+  render(appProps, deltaTime) {
     // --------
-    const { canvas: { width, height }, gl, program, matrix } = appCtx;
+    const { canvas: { width, height }, gl, program, matrix } = appProps;
 
     gl.clearColor(0.0, 0.0, 0.14, 1.0);
     gl.enable(gl.DEPTH_TEST);
@@ -235,7 +242,7 @@ class Scene {
     // --------
 
     for (const actor of this.actors) {
-      actor.render(appCtx, deltaTime);
+      actor.render(appProps, deltaTime);
     }
   }
 }
@@ -245,7 +252,7 @@ class Actor {
     this.name = name;
   }
 
-  render(appCtx, deltaTime) {
+  render(appProps, deltaTime) {
     throw new Error('Not implemented');
   }
 }
@@ -314,7 +321,7 @@ const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 
 const app = {
-  ctx: {
+  props: {
     canvas, gl, 
     program: getProgram(gl), 
     matrix: {
@@ -325,7 +332,7 @@ const app = {
   },
 
   run(scene) {
-    scene.render(app.ctx, 0);
+    scene.render(app.props, 0);
   }
 };
 
@@ -375,6 +382,10 @@ function getProgram(gl) {
 // -----------------
 
 gltf.loadScene('tank').then(scene => {
-  const tank = new Mesh('tank', Array.from(scene));
-  app.run(new Scene([tank]));
+  for (const node of scene) {
+    console.log(node);
+  }
+
+  // const tank = new Mesh('tank', Array.from(scene));
+  // app.run(new Scene([tank]));
 });

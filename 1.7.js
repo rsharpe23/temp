@@ -145,8 +145,7 @@ const gltf = {
     }
 
     _getBuffer(accessor) {
-      return this.bufferProvider
-        .getBuffer(this.accessors[accessor]);
+      return this.bufferProvider.getBuffer(this.accessors[accessor]);
     }
   },
 
@@ -217,9 +216,9 @@ class Scene {
     return this.actors.find(actor => actor.name === name);
   }
 
-  render(appCtx, deltaTime) {
+  render(appProps, deltaTime) {
     // --------
-    const { canvas: { width, height }, gl, program, matrix } = appCtx;
+    const { canvas: { width, height }, gl, program, matrix } = appProps;
 
     gl.clearColor(0.0, 0.0, 0.14, 1.0);
     gl.enable(gl.DEPTH_TEST);
@@ -236,7 +235,7 @@ class Scene {
     // --------
 
     for (const actor of this.actors) {
-      actor.render(appCtx, deltaTime);
+      actor.render(appProps, deltaTime);
     }
   }
 }
@@ -246,7 +245,7 @@ class Actor {
     this.name = name;
   }
 
-  render(appCtx, deltaTime) {
+  render(appProps, deltaTime) {
     throw new Error('Not implemented');
   }
 }
@@ -315,7 +314,7 @@ const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 
 const app = {
-  ctx: {
+  props: {
     canvas, gl, 
     program: getProgram(gl), 
     matrix: {
@@ -326,7 +325,7 @@ const app = {
   },
 
   run(scene) {
-    scene.render(app.ctx, 0);
+    scene.render(app.props, 0);
   }
 };
 
