@@ -264,13 +264,22 @@ class Scene {
     return this.actors.find(actor => actor.name === name);
   }
 
-  render(appProps, deltaTime) {
-    // --------
-    const { canvas: { width, height }, gl, prog, matrix } = appProps;
+  draw(appProps, deltaTime) {
+    for (const actor of this.actors) {
+      actor.isShown && actor.draw(appProps, deltaTime);
+    }
+  }
+}
 
+class MyScene extends Scene {
+  draw(appProps, deltaTime) {
+    const { canvas: { width, height }, gl, prog, matrix } = appProps;
+    
+    //------
     gl.clearColor(0.0, 0.0, 0.14, 1.0);
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(prog);
+    //------
 
     gl.viewport(0, 0, width, height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -280,20 +289,19 @@ class Scene {
 
     prog.setLightUniforms();
     prog.setMaterialUniforms();
-    // --------
 
-    for (const actor of this.actors) {
-      actor.render(appProps, deltaTime);
-    }
+    super.draw(appProps, deltaTime);
   }
 }
 
 class Actor {
+  isShown = true;
+
   constructor(name) {
     this.name = name;
   }
 
-  render(appProps, deltaTime) {
+  draw(appProps, deltaTime) {
     throw new Error('Not implemented');
   }
 }
@@ -310,14 +318,9 @@ class Mesh extends Actor {
     return this.nodes.find(node => node.name === name);
   }
 
-  render({ gl, prog, matrix, store }, deltaTime) {
+  draw({ gl, prog, matrix, store }) {
     for (const { trs, mesh } of this.nodes) {
-      // --------
       mat4.identity(matrix.modelView);
-      mat4.translate(matrix.modelView, matrix.modelView, [0.0, -0.8, -10.0]);
-      // mat4.rotateY(matrix.modelView, matrix.modelView, degToRad(deltaTime));
-      // --------
-
       mat4.mul(matrix.modelView, matrix.modelView, trs.calcMatrix());
       gl.uniformMatrix4fv(prog.u_MVMatrix, false, matrix.modelView);
 
@@ -325,15 +328,21 @@ class Mesh extends Actor {
       mat4.transpose(matrix.normal, matrix.modelView);
       gl.uniformMatrix4fv(prog.u_NMatrix, false, matrix.normal);
 
-      for (const { vbo, nbo, tbo, ibo } of mesh) {
+      for (const { vbo, nbo, ibo } of mesh) {
         glu.setAttribute(gl, store, prog.a_Position, vbo);
         glu.setAttribute(gl, store, prog.a_Normal, nbo);
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.buffer(gl, store));
-        gl.drawElements(gl.TRIANGLES, ibo.count, 
-          ibo.componentType, 0);
+        gl.drawElements(gl.TRIANGLES, ibo.count, ibo.componentType, 0);
       }
     }
+  }
+}
+
+class Tank extends Mesh {
+  draw(appProps, deltaTime) {
+    // TODO: Обновлять позиции разных нодов
+    super.draw(appProps, deltaTime);
   }
 }
 
@@ -376,17 +385,19 @@ const app = {
       modelView: mat4.create(),
       normal: mat4.create(),
     },
-    store: {},
+    // FIX: Не может быть общим для всех моделей, 
+    // т.к. разные модели могут иметь одинаковые названия нодов.
+    store: {}, 
   },
 
-  run(scene) {
+  run(drawable) {
     let startTime = performance.now();
 
     (function fn(elapsedTime) {
       const deltaTime = elapsedTime - startTime;
       startTime = elapsedTime;
 
-      scene.render(app.props, deltaTime / 1000);
+      drawable.draw(app.props, deltaTime / 1000);
 
       requestAnimationFrame(fn);
     })(startTime);
@@ -431,10 +442,6 @@ function getProgram(gl) {
 // -----------------
 
 gltf.loadScene('tank').then(scene => {
-  // for (const node of scene) {
-  //   console.log(node);
-  // }
-
-  const tank = new Mesh('tank', Array.from(scene));
-  app.run(new Scene([tank]));
+  const tank = new Tank('tank', Array.from(scene));
+  app.run(new MyScene([tank]));
 });
