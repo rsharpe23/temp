@@ -2,16 +2,16 @@ const { mat4 } = glMatrix;
 
 const glu = {
   createProgram(gl, vs, fs) {
-    const program = gl.createProgram();
-    gl.attachShader(program, vs);
-    gl.attachShader(program, fs);
-    gl.linkProgram(program);
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
   
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       throw new Error('Incorrect program link');
     }
   
-    return program;
+    return prog;
   },
 
   createShader(gl, type, text) {
@@ -27,18 +27,18 @@ const glu = {
     return shader;
   },
 
-  createBuffer(gl, target, data) {
+  createBuffer(gl, data, target) {
     const buffer = gl.createBuffer();
     gl.bindBuffer(target, buffer);
     gl.bufferData(target, data, gl.STATIC_DRAW);
     return buffer;
   },
 
-  setAttribute(gl, attr, { buffer, componentsPerAttr, componentType }) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer(gl));
+  setAttribute(gl, store, attr, obj) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, obj.buffer(gl, store));
     gl.enableVertexAttribArray(attr);
-    gl.vertexAttribPointer(attr, componentsPerAttr, 
-      componentType, false, 0, 0);
+    gl.vertexAttribPointer(attr, obj.typeSize, 
+      obj.componentType, false, 0, 0);
   }
 };
 
@@ -122,6 +122,58 @@ const gltf = {
     }
   },
 
+  // MeshParser: class {
+  //   constructor({ meshes, accessors, bufferViews, buffers }) {
+  //     this.meshes = meshes;
+  //     this.accessors = accessors;
+  //     this.bufferViews = bufferViews;
+  //     this.buffers = buffers;
+  //   }
+
+  //   parseMesh(meshIndex) {
+  //     return this._parseMesh(this.meshes[meshIndex]);
+  //   }
+
+  //   _parseMesh({ name, primitives }) {
+  //     primitives = primitives.map(p => ({
+  //       vbo: this._getBufferObj(p.attributes['POSITION']),
+  //       nbo: this._getBufferObj(p.attributes['NORMAL']),
+  //       tbo: this._getBufferObj(p.attributes['TEXCOORD_0']),
+  //       ibo: this._getBufferObj(p.indices),
+  //     }));
+
+  //     return { name, primitives };
+  //   }
+
+  //   _getBufferObj(accessorIndex) {
+  //     return this._parseAccessor(this.accessors[accessorIndex]);
+  //   }
+
+  //   _parseAccessor({ bufferView: bv, type, ...rest }) {
+  //     return { 
+  //       ...rest, typeSize: gltf.typeSizeMap[type],
+
+  //       getBuffer(gl, store, key) {
+  //         const buffer = store[key];
+
+  //         if (!buffer) {
+  //           const { data, target } = this._parseBufferView(this.bufferViews[bv]);
+  //           return store[key] = glu.createBuffer(gl, data, target);
+  //         }
+  
+  //         return buffer;
+  //       },
+  //     };
+  //   }
+
+  //   _parseBufferView({ buffer, byteLength, byteOffset, target }) {
+  //     const data = new Uint8Array(this.buffers[buffer], 
+  //       byteOffset, byteLength);
+
+  //     return { target, data };
+  //   }
+  // },
+
   MeshParser: class {
     constructor({ meshes, accessors, bufferViews, buffers }) {
       this.meshes = meshes;
@@ -135,42 +187,31 @@ const gltf = {
     }
 
     _parseMesh({ name, primitives }) {
-      primitives = primitives.map(p => ({
-        vbo: this._getBuffer(p.attributes['POSITION']),
-        nbo: this._getBuffer(p.attributes['NORMAL']),
-        tbo: this._getBuffer(p.attributes['TEXCOORD_0']),
-        ibo: this._getBuffer(p.indices),
+      return primitives.map(({ attributes, indices }) => ({
+        vbo: this._getBufferObj(name, attributes['POSITION']),
+        nbo: this._getBufferObj(name, attributes['NORMAL']),
+        tbo: this._getBufferObj(name, attributes['TEXCOORD_0']),
+        ibo: this._getBufferObj(name, indices),
       }));
-
-      return { name, primitives };
     }
 
-    _getBuffer(accessorIndex) {
-      return this._parseAccessor(this.accessors[accessorIndex]);
-    }
+    _getBufferObj(meshName, accessorIndex) {
+      const { bufferView, type, ...rest } = this.accessors[accessorIndex];
 
-    _parseAccessor({ bufferView: bv, type, ...rest }) {
-      return { 
-        ...rest, typeSize: gltf.typeSizeMap[type],
-
-        getBuffer(gl, store, key) {
-          const buffer = store[key];
-
-          if (!buffer) {
-            const { data, target } = this._parseBufferView(this.bufferViews[bv]);
-            return store[key] = glu.createBuffer(gl, data, target);
-          }
-  
-          return buffer;
-        },
+      const buffer = (gl, store) => {
+        const key = meshName + accessorIndex;
+        return store[key] ?? ( store[key] = this._getBuffer(gl, 
+          this.bufferViews[bufferView]) );
       };
+
+      return { ...rest, typeSize: gltf.typeSizeMap[type], buffer };
     }
 
-    _parseBufferView({ buffer, byteLength, byteOffset, target }) {
+    _getBuffer(gl, { buffer, byteLength, byteOffset, target }) {
       const data = new Uint8Array(this.buffers[buffer], 
         byteOffset, byteLength);
 
-      return { target, data };
+      return glu.createBuffer(gl, data, target);
     }
   },
 
@@ -225,20 +266,20 @@ class Scene {
 
   render(appProps, deltaTime) {
     // --------
-    const { canvas: { width, height }, gl, program, matrix } = appProps;
+    const { canvas: { width, height }, gl, prog, matrix } = appProps;
 
     gl.clearColor(0.0, 0.0, 0.14, 1.0);
     gl.enable(gl.DEPTH_TEST);
-    gl.useProgram(program);
+    gl.useProgram(prog);
 
     gl.viewport(0, 0, width, height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     mat4.perspective(matrix.projection, 1.04, width / height, 0.1, 1000.0);
-    gl.uniformMatrix4fv(program.u_PMatrix, false, matrix.projection);
+    gl.uniformMatrix4fv(prog.u_PMatrix, false, matrix.projection);
 
-    program.setLightUniforms();
-    program.setMaterialUniforms();
+    prog.setLightUniforms();
+    prog.setMaterialUniforms();
     // --------
 
     for (const actor of this.actors) {
@@ -269,26 +310,28 @@ class Mesh extends Actor {
     return this.nodes.find(node => node.name === name);
   }
 
-  render({ gl, program, matrix }) {
+  render({ gl, prog, matrix, store }, deltaTime) {
     for (const { trs, mesh } of this.nodes) {
       // --------
       mat4.identity(matrix.modelView);
       mat4.translate(matrix.modelView, matrix.modelView, [0.0, -0.8, -10.0]);
+      // mat4.rotateY(matrix.modelView, matrix.modelView, degToRad(deltaTime));
       // --------
 
       mat4.mul(matrix.modelView, matrix.modelView, trs.calcMatrix());
-      gl.uniformMatrix4fv(program.u_MVMatrix, false, matrix.modelView);
+      gl.uniformMatrix4fv(prog.u_MVMatrix, false, matrix.modelView);
 
       mat4.invert(matrix.modelView, matrix.modelView);
       mat4.transpose(matrix.normal, matrix.modelView);
-      gl.uniformMatrix4fv(program.u_NMatrix, false, matrix.normal);
+      gl.uniformMatrix4fv(prog.u_NMatrix, false, matrix.normal);
 
-      for (const { attrs, indexBuffer } of mesh) {
-        program.setAttributes(attrs);
+      for (const { vbo, nbo, tbo, ibo } of mesh) {
+        glu.setAttribute(gl, store, prog.a_Position, vbo);
+        glu.setAttribute(gl, store, prog.a_Normal, nbo);
 
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer.buffer(gl));
-        gl.drawElements(gl.TRIANGLES, indexBuffer.count, 
-          indexBuffer.componentType, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.buffer(gl, store));
+        gl.drawElements(gl.TRIANGLES, ibo.count, 
+          ibo.componentType, 0);
       }
     }
   }
@@ -320,72 +363,78 @@ const util = {
 const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 
+const fps = {
+  
+};
+
 const app = {
   props: {
     canvas, gl, 
-    program: getProgram(gl), 
+    prog: getProgram(gl), 
     matrix: {
       projection: mat4.create(),
       modelView: mat4.create(),
       normal: mat4.create(),
-    }
+    },
+    store: {},
   },
 
   run(scene) {
-    scene.render(app.props, 0);
+    let startTime = performance.now();
+
+    (function fn(elapsedTime) {
+      const deltaTime = elapsedTime - startTime;
+      startTime = elapsedTime;
+
+      scene.render(app.props, deltaTime / 1000);
+
+      requestAnimationFrame(fn);
+    })(startTime);
   }
 };
 
 function getProgram(gl) {
-  const p = util.getProgram(gl);
+  const prog = util.getProgram(gl);
 
-  p.POSITION = gl.getAttribLocation(p, "a_Position");
-  p.NORMAL = gl.getAttribLocation(p, "a_Normal");
+  prog.a_Position = gl.getAttribLocation(prog, "a_Position");
+  prog.a_Normal = gl.getAttribLocation(prog, "a_Normal");
 
-  p.u_PMatrix = gl.getUniformLocation(p, "u_PMatrix");
-  p.u_MVMatrix = gl.getUniformLocation(p, "u_MVMatrix");
-  p.u_NMatrix = gl.getUniformLocation(p, "u_NMatrix");
+  prog.u_PMatrix = gl.getUniformLocation(prog, "u_PMatrix");
+  prog.u_MVMatrix = gl.getUniformLocation(prog, "u_MVMatrix");
+  prog.u_NMatrix = gl.getUniformLocation(prog, "u_NMatrix");
 
-  p.u_AmbientColor = gl.getUniformLocation(p, "u_AmbientColor");
-  p.u_DirectionalColor = gl.getUniformLocation(p, "u_DirectionalColor");
-  p.u_SpecularColor = gl.getUniformLocation(p, "u_SpecularColor");
-  p.u_LightingPos = gl.getUniformLocation(p, "u_LightingPos");
+  prog.u_AmbientColor = gl.getUniformLocation(prog, "u_AmbientColor");
+  prog.u_DirectionalColor = gl.getUniformLocation(prog, "u_DirectionalColor");
+  prog.u_SpecularColor = gl.getUniformLocation(prog, "u_SpecularColor");
+  prog.u_LightingPos = gl.getUniformLocation(prog, "u_LightingPos");
 
-  p.u_MaterialAmbientColor = gl.getUniformLocation(p, "u_MaterialAmbientColor");
-  p.u_MaterialDiffuseColor = gl.getUniformLocation(p, "u_MaterialDiffuseColor");
-  p.u_MaterialSpecularColor = gl.getUniformLocation(p, "u_MaterialSpecularColor");
+  prog.u_MaterialAmbientColor = gl.getUniformLocation(prog, "u_MaterialAmbientColor");
+  prog.u_MaterialDiffuseColor = gl.getUniformLocation(prog, "u_MaterialDiffuseColor");
+  prog.u_MaterialSpecularColor = gl.getUniformLocation(prog, "u_MaterialSpecularColor");
 
-  p.setLightUniforms = () => {
-    gl.uniform3f(p.u_AmbientColor, 0.4, 0.4, 0.4);
-    gl.uniform3f(p.u_DirectionalColor, 0.8, 0.8, 0.8);
-    gl.uniform3f(p.u_SpecularColor, 1.0, 1.0, 1.0);
-    gl.uniform3fv(p.u_LightingPos, [0.0, -7.0, -10.0]);
+  prog.setLightUniforms = () => {
+    gl.uniform3f(prog.u_AmbientColor, 0.4, 0.4, 0.4);
+    gl.uniform3f(prog.u_DirectionalColor, 0.8, 0.8, 0.8);
+    gl.uniform3f(prog.u_SpecularColor, 1.0, 1.0, 1.0);
+    gl.uniform3fv(prog.u_LightingPos, [0.0, -7.0, -10.0]);
   };
 
-  p.setMaterialUniforms = () => {
-    gl.uniform3f(p.u_MaterialAmbientColor, 0.0, 0.0, 0.0);
-    gl.uniform3f(p.u_MaterialDiffuseColor, 0.2, 0.6, 0.4);
-    gl.uniform3f(p.u_MaterialSpecularColor, 0.8, 0.8, 0.8);
+  prog.setMaterialUniforms = () => {
+    gl.uniform3f(prog.u_MaterialAmbientColor, 0.0, 0.0, 0.0);
+    gl.uniform3f(prog.u_MaterialDiffuseColor, 0.2, 0.6, 0.4);
+    gl.uniform3f(prog.u_MaterialSpecularColor, 0.8, 0.8, 0.8);
   };
 
-  p.setAttributes = attrs => {
-    for (const key in attrs) {
-      if (Object.hasOwnProperty.call(p, key)) {
-        glu.setAttribute(gl, p[key], attrs[key]);
-      }
-    }
-  };
-
-  return p;
+  return prog;
 }
 
 // -----------------
 
 gltf.loadScene('tank').then(scene => {
-  for (const node of scene) {
-    console.log(node);
-  }
+  // for (const node of scene) {
+  //   console.log(node);
+  // }
 
-  // const tank = new Mesh('tank', Array.from(scene));
-  // app.run(new Scene([tank]));
+  const tank = new Mesh('tank', Array.from(scene));
+  app.run(new Scene([tank]));
 });
