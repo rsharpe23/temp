@@ -1,4 +1,4 @@
-const { mat4 } = glMatrix;
+const { mat4, quat } = glMatrix;
 
 const glu = {
   createProgram(gl, vs, fs) {
@@ -122,58 +122,6 @@ const gltf = {
     }
   },
 
-  // MeshParser: class {
-  //   constructor({ meshes, accessors, bufferViews, buffers }) {
-  //     this.meshes = meshes;
-  //     this.accessors = accessors;
-  //     this.bufferViews = bufferViews;
-  //     this.buffers = buffers;
-  //   }
-
-  //   parseMesh(meshIndex) {
-  //     return this._parseMesh(this.meshes[meshIndex]);
-  //   }
-
-  //   _parseMesh({ name, primitives }) {
-  //     primitives = primitives.map(p => ({
-  //       vbo: this._getBufferObj(p.attributes['POSITION']),
-  //       nbo: this._getBufferObj(p.attributes['NORMAL']),
-  //       tbo: this._getBufferObj(p.attributes['TEXCOORD_0']),
-  //       ibo: this._getBufferObj(p.indices),
-  //     }));
-
-  //     return { name, primitives };
-  //   }
-
-  //   _getBufferObj(accessorIndex) {
-  //     return this._parseAccessor(this.accessors[accessorIndex]);
-  //   }
-
-  //   _parseAccessor({ bufferView: bv, type, ...rest }) {
-  //     return { 
-  //       ...rest, typeSize: gltf.typeSizeMap[type],
-
-  //       getBuffer(gl, store, key) {
-  //         const buffer = store[key];
-
-  //         if (!buffer) {
-  //           const { data, target } = this._parseBufferView(this.bufferViews[bv]);
-  //           return store[key] = glu.createBuffer(gl, data, target);
-  //         }
-  
-  //         return buffer;
-  //       },
-  //     };
-  //   }
-
-  //   _parseBufferView({ buffer, byteLength, byteOffset, target }) {
-  //     const data = new Uint8Array(this.buffers[buffer], 
-  //       byteOffset, byteLength);
-
-  //     return { target, data };
-  //   }
-  // },
-
   MeshParser: class {
     constructor({ meshes, accessors, bufferViews, buffers }) {
       this.meshes = meshes;
@@ -241,8 +189,27 @@ const gltf = {
 
 // -----------------
 
-class Scene {
+class Drawable {
+  _canDraw = false;
+
+  draw(appProps, deltaTime) {
+    if (this._canDraw) {
+      this._draw(appProps, deltaTime);
+      return;
+    }
+
+    this._beforeDraw?.(appProps);
+    this._canDraw = true;
+  }
+
+  _draw(appProps, deltaTime) {
+    throw new Error('Not implemented');
+  }
+}
+
+class Scene extends Drawable {
   constructor(actors) {
+    super();
     this.actors = actors;
   }
 
@@ -265,21 +232,23 @@ class Scene {
   }
 
   draw(appProps, deltaTime) {
+    super.draw(appProps, deltaTime);
+
     for (const actor of this.actors) {
-      actor.isShown && actor.draw(appProps, deltaTime);
+      actor.draw(appProps, deltaTime);
     }
   }
 }
 
 class MyScene extends Scene {
-  draw(appProps, deltaTime) {
-    const { canvas: { width, height }, gl, prog, matrix } = appProps;
-    
-    //------
+  _beforeDraw({ gl, prog }) {
     gl.clearColor(0.0, 0.0, 0.14, 1.0);
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(prog);
-    //------
+  }
+
+  _draw({ canvas, gl, prog, matrix }) {
+    const { width, height } = canvas;
 
     gl.viewport(0, 0, width, height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -289,36 +258,46 @@ class MyScene extends Scene {
 
     prog.setLightUniforms();
     prog.setMaterialUniforms();
-
-    super.draw(appProps, deltaTime);
   }
 }
 
-class Actor {
-  isShown = true;
+class Actor extends Drawable {
+  isHidden = false;
 
-  constructor(name) {
+  constructor(name, trs) {
+    super();
     this.name = name;
+    this.trs = trs;
   }
 
   draw(appProps, deltaTime) {
-    throw new Error('Not implemented');
+    this.isHidden || super.draw(appProps, deltaTime);
   }
-}
+} 
 
 // Базовый класс для 3D-объектов. 
 // Для 2D - это может быть Sprite.
 class Mesh extends Actor {
-  constructor(name, nodes) {
-    super(name);
+  constructor(name, trs, nodes) {
+    super(name, trs);
     this.nodes = nodes;
+  }
+
+  get _accessor() {
+    return this.nodes.id - 1;
   }
 
   findNode(name) {
     return this.nodes.find(node => node.name === name);
   }
 
-  draw({ gl, prog, matrix, store }) {
+  _beforeDraw() {
+    for (const { trs } of this.nodes) {
+      trs.parent || (trs.parent = this.trs);
+    }
+  }
+
+  _draw({ gl, prog, matrix, store }) {
     for (const { trs, mesh } of this.nodes) {
       mat4.identity(matrix.modelView);
       mat4.mul(matrix.modelView, matrix.modelView, trs.calcMatrix());
@@ -329,10 +308,13 @@ class Mesh extends Actor {
       gl.uniformMatrix4fv(prog.u_NMatrix, false, matrix.normal);
 
       for (const { vbo, nbo, ibo } of mesh) {
-        glu.setAttribute(gl, store, prog.a_Position, vbo);
-        glu.setAttribute(gl, store, prog.a_Normal, nbo);
+        glu.setAttribute(gl, store[this._accessor], prog.a_Position, vbo);
+        glu.setAttribute(gl, store[this._accessor], prog.a_Normal, nbo);
 
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.buffer(gl, store));
+        gl.bindBuffer(
+          gl.ELEMENT_ARRAY_BUFFER, 
+          ibo.buffer(gl, store[this._accessor])
+        );
         gl.drawElements(gl.TRIANGLES, ibo.count, ibo.componentType, 0);
       }
     }
@@ -340,9 +322,15 @@ class Mesh extends Actor {
 }
 
 class Tank extends Mesh {
-  draw(appProps, deltaTime) {
-    // TODO: Обновлять позиции разных нодов
-    super.draw(appProps, deltaTime);
+  _beforeDraw(appProps) {
+    super._beforeDraw(appProps);
+    this.trs.translation = [0.0, -0.8, -10.0];
+  }
+
+  _draw(appProps, deltaTime) {
+    // TODO: Обновлять трансформации
+    quat.rotateY(this.trs.rotation, this.trs.rotation, deltaTime);
+    super._draw(appProps, deltaTime);
   }
 }
 
@@ -372,10 +360,6 @@ const util = {
 const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 
-const fps = {
-  
-};
-
 const app = {
   props: {
     canvas, gl, 
@@ -385,9 +369,7 @@ const app = {
       modelView: mat4.create(),
       normal: mat4.create(),
     },
-    // FIX: Не может быть общим для всех моделей, 
-    // т.к. разные модели могут иметь одинаковые названия нодов.
-    store: {}, 
+    store: [], 
   },
 
   run(drawable) {
@@ -442,6 +424,10 @@ function getProgram(gl) {
 // -----------------
 
 gltf.loadScene('tank').then(scene => {
-  const tank = new Tank('tank', Array.from(scene));
+  const nodes = Array.from(scene);
+  nodes.id = app.props.store.push({});
+  return nodes;
+}).then(nodes => {
+  const tank = new Tank('tank', new TRS({}, null), nodes);
   app.run(new MyScene([tank]));
 });
