@@ -68,6 +68,10 @@ class TRS {
   }
 }
 
+class QuickTRS extends TRS {
+
+}
+
 const gltf = {
   typeSizeMap: {
     'SCALAR': 1,
@@ -87,9 +91,11 @@ const gltf = {
       return new gltf.Scene(nodeTree, meshParser);
     }
 
+    // Возможно лучше сделать обычный метод 
+    // getNodes() без итерирования...
     *[Symbol.iterator]() {
       yield* this.nodeTree.traverse((node, parent) => {
-        node.trs = new TRS(node, parent?.trs);
+        node.trs = new QuickTRS(node, parent?.trs);
         node.mesh = this.meshParser.parseMesh(node.mesh);
         return node;
       });
@@ -428,6 +434,6 @@ gltf.loadScene('tank').then(scene => {
   nodes.id = app.props.store.push({});
   return nodes;
 }).then(nodes => {
-  const tank = new Tank('tank', new TRS({}, null), nodes);
+  const tank = new Tank('tank', new QuickTRS({}, null), nodes);
   app.run(new MyScene([tank]));
 });
