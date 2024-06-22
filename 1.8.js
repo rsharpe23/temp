@@ -193,6 +193,11 @@ const gltf = {
   },
 };
 
+Array.prototype.remove = function(item) {
+  const index = this.indexOf(item);
+  ~index && this.splice(index, 1);
+};
+
 // -----------------
 
 class Drawable {
@@ -214,23 +219,16 @@ class Drawable {
 }
 
 class Scene extends Drawable {
-  constructor(actors) {
-    super();
-    this.actors = actors;
-  }
+  actors = [];
 
   addActor(actor) {
     this.actors.push(actor);
+    actor.scene = this;
   }
 
   removeActor(actor) {
-    const index = this.actors.indexOf(actor);
-    ~index && this.actors.splice(index, 1);
-  }
-
-  removeActorBy(name) {
-    const actor = this.findActor(name);
-    actor && this.removeActor(actor);
+    this.actors.remove(actor);
+    actor.scene = null;
   }
 
   findActor(name) {
@@ -239,10 +237,7 @@ class Scene extends Drawable {
 
   draw(appProps, deltaTime) {
     super.draw(appProps, deltaTime);
-
-    for (const actor of this.actors) {
-      actor.draw(appProps, deltaTime);
-    }
+    this.actors.forEach(actor => actor.draw(appProps, deltaTime));
   }
 }
 
@@ -268,6 +263,7 @@ class MyScene extends Scene {
 }
 
 class Actor extends Drawable {
+  scene = null;
   isHidden = false;
 
   constructor(name, trs) {
@@ -289,7 +285,7 @@ class Mesh extends Actor {
     this.nodes = nodes;
   }
 
-  get _accessor() {
+  get accessor() {
     return this.nodes.id - 1;
   }
 
@@ -314,12 +310,12 @@ class Mesh extends Actor {
       gl.uniformMatrix4fv(prog.u_NMatrix, false, matrix.normal);
 
       for (const { vbo, nbo, ibo } of mesh) {
-        glu.setAttribute(gl, store[this._accessor], prog.a_Position, vbo);
-        glu.setAttribute(gl, store[this._accessor], prog.a_Normal, nbo);
+        glu.setAttribute(gl, store[this.accessor], prog.a_Position, vbo);
+        glu.setAttribute(gl, store[this.accessor], prog.a_Normal, nbo);
 
         gl.bindBuffer(
           gl.ELEMENT_ARRAY_BUFFER, 
-          ibo.buffer(gl, store[this._accessor])
+          ibo.buffer(gl, store[this.accessor])
         );
         gl.drawElements(gl.TRIANGLES, ibo.count, ibo.componentType, 0);
       }
@@ -334,7 +330,6 @@ class Tank extends Mesh {
   }
 
   _draw(appProps, deltaTime) {
-    // TODO: Обновлять трансформации
     quat.rotateY(this.trs.rotation, this.trs.rotation, deltaTime);
     super._draw(appProps, deltaTime);
   }
@@ -434,6 +429,7 @@ gltf.loadScene('tank').then(scene => {
   nodes.id = app.props.store.push({});
   return nodes;
 }).then(nodes => {
-  const tank = new Tank('tank', new QuickTRS({}, null), nodes);
-  app.run(new MyScene([tank]));
+  const ms = new MyScene();
+  ms.addActor(new Tank('tank', new QuickTRS({}, null), nodes));
+  // app.run(ms);
 });
