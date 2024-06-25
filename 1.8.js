@@ -43,6 +43,8 @@ const glu = {
 };
 
 class TRS {
+  _matrix = mat4.create();
+
   constructor({ translation, rotation, scale }, parent) {
     this.translation = translation ?? [0, 0, 0];
     this.rotation = rotation ?? [0, 0, 0, 1];
@@ -50,29 +52,24 @@ class TRS {
     this.parent = parent;
   }
 
-  calcMatrix() {
-    const mat = this._calcMatrix();
+  get matrix() {
+    this._calcMatrix(this._matrix);
     if (this.parent) {
-      mat4.mul(mat, this.parent.calcMatrix(), mat);
+      mat4.mul(this._matrix, this.parent.matrix, this._matrix);
     }
 
-    return mat;
+    return this._matrix;
   }
 
-  _calcMatrix() {
-    const mat = mat4.create();
+  _calcMatrix(mat) {
     mat4.fromRotationTranslationScale(mat, 
       this.rotation, this.translation, this.scale);
-
-    return mat;
   }
 }
 
-class QuickTRS extends TRS {
+const listMixin = {};
 
-}
-
-const gltf = {
+const glTF = {
   typeSizeMap: {
     'SCALAR': 1,
     'VEC2': 2,
@@ -80,28 +77,24 @@ const gltf = {
   },
 
   Scene: class {
-    constructor(nodeTree, meshParser) {
-      this.nodeTree = nodeTree;
-      this.meshParser = meshParser;
-    }
-  
-    static from(data) {
-      const nodeTree = gltf.NodeTree.from(data);
-      const meshParser = new gltf.MeshParser(data);
-      return new gltf.Scene(nodeTree, meshParser);
+    id = (Scene.id && ++Scene.id) ?? (Scene.id = 1);
+    nodes = [];
+
+    addNode(node) {
+      this.nodes.push(node);
     }
 
-    // Возможно лучше сделать обычный метод 
-    // getNodes() без итерирования...
+    findNode(name) {
+      return this.nodes.find(node => node.name === name);
+    }
+
     *[Symbol.iterator]() {
-      yield* this.nodeTree.traverse((node, parent) => {
-        node.trs = new QuickTRS(node, parent?.trs);
-        node.mesh = this.meshParser.parseMesh(node.mesh);
-        return node;
-      });
+      for (const node of this.nodes) {
+        yield node;
+      }
     }
   },
-  
+
   NodeTree: class {
     constructor(root, children, nodes) {
       this.root = root;
@@ -110,19 +103,19 @@ const gltf = {
     }
 
     static from({ scene, scenes, nodes }) {
-      return new gltf.NodeTree(null, scenes[scene].nodes, nodes);
+      return new glTF.NodeTree(null, scenes[scene].nodes, nodes);
     }
 
-    *traverse(fn) {
-      for (const node of this.children) {
-        const { children, ...rest } = this.nodes[node];
-        yield fn(rest, this.root);
+    traverse(cb) {
+      for (const index of this.children) {
+        const { children, ...rest } = this.nodes[index];
+        cb && cb(rest, this.root);
         
         if (children) {
-          const nodeTree = new gltf.NodeTree(rest, 
+          const subTree = new glTF.NodeTree(rest, 
             children, this.nodes);
 
-          yield* nodeTree.traverse(fn);
+          subTree.traverse(cb);
         }
       }
     }
@@ -158,7 +151,7 @@ const gltf = {
           this.bufferViews[bufferView]) );
       };
 
-      return { ...rest, typeSize: gltf.typeSizeMap[type], buffer };
+      return { ...rest, typeSize: glTF.typeSizeMap[type], buffer };
     }
 
     _getBuffer(gl, { buffer, byteLength, byteOffset, target }) {
@@ -170,20 +163,33 @@ const gltf = {
   },
 
   async load(path) {
-    const res = await fetch(gltf.getURL(path));
+    const res = await fetch(glTF.getURL(path));
     const data = await res.json();
     const { uri } = data.buffers[0];
-    const res2 = await fetch(gltf.getURL(path, uri));
+    const res2 = await fetch(glTF.getURL(path, uri));
     data.buffers[0] = await res2.arrayBuffer();
     return data;
   },
 
   async loadScene(path) {
-    const data = await gltf.load(path);
-    return gltf.Scene.from(data);
+    const data = await glTF.load(path);
+    const nodeTree = glTF.NodeTree.from(data);
+    const meshParser = new glTF.MeshParser(data);
+    return glTF.getScene(nodeTree, meshParser);
+  },
+
+  getScene(nodeTree, meshParser) {
+    const scene = new glTF.Scene();
+    nodeTree.traverse((node, parent) => {
+      node.trs = new TRS(node, parent?.trs);
+      const mesh = meshParser.parseMesh(node.mesh);
+      scene.addNode({ name: node.name, trs: node.trs, mesh });
+    });
+
+    return scene;
   },
   
-  getURL(path, file = gltf.getFile(path)) {
+  getURL(path, file = glTF.getFile(path)) {
     return `${path}/${file}`;
   },
   
@@ -223,12 +229,10 @@ class Scene extends Drawable {
 
   addActor(actor) {
     this.actors.push(actor);
-    actor.scene = this;
   }
 
   removeActor(actor) {
     this.actors.remove(actor);
-    actor.scene = null;
   }
 
   findActor(name) {
@@ -237,7 +241,9 @@ class Scene extends Drawable {
 
   draw(appProps, deltaTime) {
     super.draw(appProps, deltaTime);
-    this.actors.forEach(actor => actor.draw(appProps, deltaTime));
+    for (const actor of this.actors) {
+      actor.draw(appProps, deltaTime);
+    }
   }
 }
 
@@ -248,14 +254,14 @@ class MyScene extends Scene {
     gl.useProgram(prog);
   }
 
-  _draw({ canvas, gl, prog, matrix }) {
+  _draw({ canvas, gl, prog, matrices }) {
     const { width, height } = canvas;
 
     gl.viewport(0, 0, width, height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    mat4.perspective(matrix.projection, 1.04, width / height, 0.1, 1000.0);
-    gl.uniformMatrix4fv(prog.u_PMatrix, false, matrix.projection);
+    mat4.perspective(matrices.projection, 1.04, width / height, 0.1, 1000.0);
+    gl.uniformMatrix4fv(prog.u_PMatrix, false, matrices.projection);
 
     prog.setLightUniforms();
     prog.setMaterialUniforms();
@@ -263,7 +269,6 @@ class MyScene extends Scene {
 }
 
 class Actor extends Drawable {
-  scene = null;
   isHidden = false;
 
   constructor(name, trs) {
@@ -280,34 +285,34 @@ class Actor extends Drawable {
 // Базовый класс для 3D-объектов. 
 // Для 2D - это может быть Sprite.
 class Mesh extends Actor {
-  constructor(name, trs, nodes) {
+  constructor(name, trs, glTFScene) {
     super(name, trs);
-    this.nodes = nodes;
+    this.glTFScene = glTFScene;
   }
 
   get accessor() {
-    return this.nodes.id - 1;
+    return this.glTFScene.id;
   }
 
   findNode(name) {
-    return this.nodes.find(node => node.name === name);
+    return this.glTFScene.findNode(name);
   }
 
   _beforeDraw() {
-    for (const { trs } of this.nodes) {
-      trs.parent || (trs.parent = this.trs);
+    for (const { trs } of this.glTFScene) {
+      trs.parent ?? (trs.parent = this.trs);
     }
   }
 
-  _draw({ gl, prog, matrix, store }) {
-    for (const { trs, mesh } of this.nodes) {
-      mat4.identity(matrix.modelView);
-      mat4.mul(matrix.modelView, matrix.modelView, trs.calcMatrix());
-      gl.uniformMatrix4fv(prog.u_MVMatrix, false, matrix.modelView);
+  _draw({ gl, prog, matrices, store }) {
+    for (const { trs, mesh } of this.glTFScene) {
+      mat4.identity(matrices.modelView);
+      mat4.mul(matrices.modelView, matrices.modelView, trs.matrix);
+      gl.uniformMatrix4fv(prog.u_MVMatrix, false, matrices.modelView);
 
-      mat4.invert(matrix.modelView, matrix.modelView);
-      mat4.transpose(matrix.normal, matrix.modelView);
-      gl.uniformMatrix4fv(prog.u_NMatrix, false, matrix.normal);
+      mat4.invert(matrices.modelView, matrices.modelView);
+      mat4.transpose(matrices.normal, matrices.modelView);
+      gl.uniformMatrix4fv(prog.u_NMatrix, false, matrices.normal);
 
       for (const { vbo, nbo, ibo } of mesh) {
         glu.setAttribute(gl, store[this.accessor], prog.a_Position, vbo);
@@ -315,25 +320,53 @@ class Mesh extends Actor {
 
         gl.bindBuffer(
           gl.ELEMENT_ARRAY_BUFFER, 
-          ibo.buffer(gl, store[this.accessor])
-        );
+          ibo.buffer(gl, store[this.accessor]));
+          
         gl.drawElements(gl.TRIANGLES, ibo.count, ibo.componentType, 0);
       }
     }
   }
 }
 
-class Tank extends Mesh {
+class StaticMesh extends Mesh {
   _beforeDraw(appProps) {
     super._beforeDraw(appProps);
-    this.trs.translation = [0.0, -0.8, -10.0];
-  }
 
-  _draw(appProps, deltaTime) {
-    quat.rotateY(this.trs.rotation, this.trs.rotation, deltaTime);
-    super._draw(appProps, deltaTime);
+    // BUG
+    // for (const { trs } of this.glTFScene) {
+    //   Object.defineProperty(trs, 'matrix', { value: trs.matrix });
+    // }
+
+    // let { id, nodes } = this.glTFScene;
+
+    // nodes = nodes.map(node => {
+    //   const trs = { ...node.trs, matrix: node.trs.matrix };
+    //   return { ...node, trs };
+    // });
+
+    // this.glTFScene = { 
+    //   id, nodes, 
+    //   *[Symbol.iterator]() {
+    //     for (const node of this.nodes) {
+    //       yield node;
+    //     }
+    //   } 
+    // };
+
   }
 }
+
+// class Tank extends StaticMesh {
+//   _beforeDraw(appProps) {
+//     this.trs.translation = [0.0, -0.8, -10.0];
+//     super._beforeDraw(appProps);
+//   }
+
+//   _draw(appProps, deltaTime) {
+//     // quat.rotateY(this.trs.rotation, this.trs.rotation, -deltaTime);
+//     super._draw(appProps, deltaTime);
+//   }
+// }
 
 // -----------------
 
@@ -365,12 +398,12 @@ const app = {
   props: {
     canvas, gl, 
     prog: getProgram(gl), 
-    matrix: {
+    matrices: {
       projection: mat4.create(),
       modelView: mat4.create(),
       normal: mat4.create(),
     },
-    store: [], 
+    store: {}, 
   },
 
   run(drawable) {
@@ -424,12 +457,18 @@ function getProgram(gl) {
 
 // -----------------
 
-gltf.loadScene('tank').then(scene => {
-  const nodes = Array.from(scene);
-  nodes.id = app.props.store.push({});
-  return nodes;
-}).then(nodes => {
-  const ms = new MyScene();
-  ms.addActor(new Tank('tank', new QuickTRS({}, null), nodes));
+glTF.loadScene('tank').then(scene => {
+  app.props.store[scene.id] = {};
+  return scene;
+}).then(scene => {
+  // const ms = new MyScene();
+  // ms.addActor(new Mesh('tank', new TRS({}), scene));
+  // ms.addActor(new StaticMesh('tank', new TRS({}), scene));
   // app.run(ms);
 });
+
+// -----------------
+
+// Можно попробовать перенести все обновляемые действия 
+// объектов во внешний Script. А в самих объектах оставить только 
+// метод отрисовки и API взаимодействия.
