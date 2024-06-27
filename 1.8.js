@@ -219,7 +219,6 @@ class TRS {
   }
 
   _calcMatrix(out) {
-    console.log('!!!');
     this._calcMatrixRaw(out);
     if (this.parent) {
       mat4.mul(out, this.parent.matrix, out);
@@ -240,7 +239,9 @@ const glTF = {
   },
 
   Scene: class {
-    id = (Scene.id && ++Scene.id) ?? (Scene.id = 1);
+    static _count = 0;
+
+    id = ++glTF.Scene._count;
     nodes = [];
 
     addNode(node) {
@@ -309,7 +310,7 @@ const glTF = {
       const { bufferView, type, ...rest } = this.accessors[accessorIndex];
 
       const buffer = (gl, store) => {
-        const key = meshName + accessorIndex;
+        const key = `${meshName}_${accessorIndex}`;
         return store[key] ?? ( store[key] = this._getBuffer(gl, 
           this.bufferViews[bufferView]) );
       };
@@ -441,7 +442,9 @@ class Actor extends Drawable {
   }
 
   draw(appProps, deltaTime) {
-    this.isHidden || super.draw(appProps, deltaTime);
+    if (!this.isHidden) {
+      super.draw(appProps, deltaTime);
+    }
   }
 } 
 
@@ -463,7 +466,7 @@ class Mesh extends Actor {
 
   _beforeDraw() {
     for (const { trs } of this.glTFScene) {
-      trs.parent ?? (trs.parent = this.trs);
+      if (!trs.parent) trs.parent = this.trs;
     }
   }
 
@@ -492,16 +495,27 @@ class Mesh extends Actor {
 }
 
 class Tank extends Mesh {
+  _tower = null;
+  get tower() {
+    return this._tower ?? 
+      (this._tower = this.findNode('Tower'));
+  }
+
   _beforeDraw(appProps) {
-    this.trs.translation = [0.0, -0.8, -10.0];
+    this.trs.translation = [0.0, -3, -12.0];
     super._beforeDraw(appProps);
   }
 
   _draw(appProps, deltaTime) {
-    // const q = quat.create();
-    // quat.rotateY(q, this.trs.rotation, -deltaTime);
-    // this.trs.rotation = q;
-    
+    const q = quat.create();
+    const q2 = quat.create();
+
+    quat.rotateY(q, this.trs.rotation, deltaTime);
+    this.trs.rotation = q;
+
+    quat.rotateY(q2, this.tower.trs.rotation, -deltaTime * 2);
+    this.tower.trs.rotation = q2;
+
     super._draw(appProps, deltaTime);
   }
 }
