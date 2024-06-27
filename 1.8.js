@@ -42,32 +42,195 @@ const glu = {
   }
 };
 
+// class TRS {
+//   _matrix = mat4.create();
+
+//   constructor({ translation, rotation, scale }, parent) {
+//     this.translation = translation ?? [0, 0, 0];
+//     this.rotation = rotation ?? [0, 0, 0, 1];
+//     this.scale = scale ?? [1, 1, 1];
+//     this.parent = parent;
+//   }
+
+//   get matrix() {
+//     this._calcMatrix(this._matrix);
+//     if (this.parent) {
+//       mat4.mul(this._matrix, this.parent.matrix, this._matrix);
+//     }
+
+//     return this._matrix;
+//   }
+
+//   _calcMatrix(mat) {
+//     mat4.fromRotationTranslationScale(mat, 
+//       this.rotation, this.translation, this.scale);
+//   }
+// }
+
+// class TRS {
+//   _matrix = mat4.create();
+//   _modified = false;
+
+//   _translation = [0, 0, 0];
+//   _rotation = [0, 0, 0, 1];
+//   _scale = [1, 1, 1];
+//   _parent = null;
+
+//   constructor(...args) {
+//     this._constructor(...args);
+//     this.on('change', () => this._modified = true);
+//   }
+
+//   _constructor({ translation, rotation, scale }, parent) {
+//     translation && (this.translation = translation);
+//     rotation && (this.rotation = rotation);
+//     scale && (this.scale = scale);
+//     parent && (this.parent = parent);
+//   }
+
+//   get translation() { return this._translation; }
+//   set translation(value) {
+//     this._translation = value;
+//     this._change();
+//   }
+
+//   get rotation() { return this._rotation; }
+//   set rotation(value) {
+//     this._rotation = value;
+//     this._change();
+//   }
+
+//   get scale() { return this._scale; }
+//   set scale(value) {
+//     this._scale = value;
+//     this._change();
+//   }
+
+//   get parent() { return this._parent; }
+//   set parent(value) {
+//     const handler = this._change.bind(this);
+//     this._parent?.off('change', handler);
+//     if (this._parent = value) {
+//       this._parent.on('change', handler);
+//     }
+
+//     this._change();
+//   }
+
+//   get matrix() {
+//     if (this._modified) {
+//       this._calcMatrix(this._matrix);
+//       this._modified = false;
+//     }
+
+//     return this._matrix;
+//   }
+
+//   _calcMatrix(out) {
+//     this._calcMatrixRaw(out);
+//     if (this.parent) {
+//       mat4.mul(out, this.parent.matrix, out);
+//     }
+//   }
+
+//   _calcMatrixRaw(out) {
+//     mat4.fromRotationTranslationScale(out, 
+//       this.rotation, this.translation, this.scale);
+//   }
+
+//   _change() {
+//     this.trigger('change');
+//   }
+// }
+
+// Object.assign(TRS.prototype, eventMixin);
+
 class TRS {
   _matrix = mat4.create();
+  _changed = false;
+
+  _translation = [0, 0, 0];
+  _rotation = [0, 0, 0, 1];
+  _scale = [1, 1, 1];
+  _parent = null;
 
   constructor({ translation, rotation, scale }, parent) {
-    this.translation = translation ?? [0, 0, 0];
-    this.rotation = rotation ?? [0, 0, 0, 1];
-    this.scale = scale ?? [1, 1, 1];
-    this.parent = parent;
+    translation && (this.translation = translation);
+    rotation && (this.rotation = rotation);
+    scale && (this.scale = scale);
+    parent && (this.parent = parent);
+  }
+
+  get translation() { return this._translation; }
+  set translation(value) {
+    this._translation = value;
+    this.onChange();
+  }
+
+  get rotation() { return this._rotation; }
+  set rotation(value) {
+    this._rotation = value;
+    this.onChange();
+  }
+
+  get scale() { return this._scale; }
+  set scale(value) {
+    this._scale = value;
+    this.onChange();
+  }
+
+  get parent() { return this._parent; }
+  set parent(value) {
+    // Перед тем, как задать новый parent, нужно очистить предыдущий, 
+    // иначе получится так, что trs, который уже не является 
+    // parent'ом, при обновлении будет дёргать onChange 
+    // тех trs, к которым уже не относится
+    if (this._parent) {
+      const { origin } = this._parent.onChange;
+      if (origin) this._parent.onChange = origin;
+    }
+
+    // Это условие должно идти вторым, т.к. если задавать parent'ом 
+    // один и тот же trs, то получится цепочка ф-ций, 
+    // в которых origin будет иметь зависимости
+    if (value) {
+      const { onChange } = value;
+      value.onChange = Object.assign(() => {
+        onChange.call(value);
+        this.onChange();
+      }, { origin: onChange });
+    }
+
+    this._parent = value;
+    this.onChange();
   }
 
   get matrix() {
-    this._calcMatrix(this._matrix);
-    if (this.parent) {
-      mat4.mul(this._matrix, this.parent.matrix, this._matrix);
+    if (this._changed) {
+      this._calcMatrix(this._matrix);
+      this._changed = false;
     }
 
     return this._matrix;
   }
 
-  _calcMatrix(mat) {
-    mat4.fromRotationTranslationScale(mat, 
+  onChange() {
+    this._changed = true;
+  }
+
+  _calcMatrix(out) {
+    console.log('!!!');
+    this._calcMatrixRaw(out);
+    if (this.parent) {
+      mat4.mul(out, this.parent.matrix, out);
+    }
+  }
+
+  _calcMatrixRaw(out) {
+    mat4.fromRotationTranslationScale(out, 
       this.rotation, this.translation, this.scale);
   }
 }
-
-const listMixin = {};
 
 const glTF = {
   typeSizeMap: {
@@ -328,45 +491,20 @@ class Mesh extends Actor {
   }
 }
 
-class StaticMesh extends Mesh {
+class Tank extends Mesh {
   _beforeDraw(appProps) {
+    this.trs.translation = [0.0, -0.8, -10.0];
     super._beforeDraw(appProps);
+  }
 
-    // BUG
-    // for (const { trs } of this.glTFScene) {
-    //   Object.defineProperty(trs, 'matrix', { value: trs.matrix });
-    // }
-
-    // let { id, nodes } = this.glTFScene;
-
-    // nodes = nodes.map(node => {
-    //   const trs = { ...node.trs, matrix: node.trs.matrix };
-    //   return { ...node, trs };
-    // });
-
-    // this.glTFScene = { 
-    //   id, nodes, 
-    //   *[Symbol.iterator]() {
-    //     for (const node of this.nodes) {
-    //       yield node;
-    //     }
-    //   } 
-    // };
-
+  _draw(appProps, deltaTime) {
+    // const q = quat.create();
+    // quat.rotateY(q, this.trs.rotation, -deltaTime);
+    // this.trs.rotation = q;
+    
+    super._draw(appProps, deltaTime);
   }
 }
-
-// class Tank extends StaticMesh {
-//   _beforeDraw(appProps) {
-//     this.trs.translation = [0.0, -0.8, -10.0];
-//     super._beforeDraw(appProps);
-//   }
-
-//   _draw(appProps, deltaTime) {
-//     // quat.rotateY(this.trs.rotation, this.trs.rotation, -deltaTime);
-//     super._draw(appProps, deltaTime);
-//   }
-// }
 
 // -----------------
 
@@ -461,10 +599,9 @@ glTF.loadScene('tank').then(scene => {
   app.props.store[scene.id] = {};
   return scene;
 }).then(scene => {
-  // const ms = new MyScene();
-  // ms.addActor(new Mesh('tank', new TRS({}), scene));
-  // ms.addActor(new StaticMesh('tank', new TRS({}), scene));
-  // app.run(ms);
+  const ms = new MyScene();
+  ms.addActor(new Tank('tank', new TRS({}), scene));
+  app.run(ms);
 });
 
 // -----------------
