@@ -1,5 +1,7 @@
 const { mat4, quat } = glMatrix;
 
+const listMixin = {};
+
 const glu = {
   createProgram(gl, vs, fs) {
     const prog = gl.createProgram();
@@ -7,9 +9,8 @@ const glu = {
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
   
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
       throw new Error('Incorrect program link');
-    }
   
     return prog;
   },
@@ -20,7 +21,7 @@ const glu = {
     gl.compileShader(shader);
   
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      gl.deleteShader(shader);
+      gl.deleteShader(shader); // возможно это лишнее, т.к. программа все равно остановится
       throw new Error('Incorrect shader compile');
     }
   
@@ -154,11 +155,11 @@ class TRS {
   _scale = [1, 1, 1];
   _parent = null;
 
-  constructor({ translation, rotation, scale }, parent) {
-    translation && (this.translation = translation);
-    rotation && (this.rotation = rotation);
-    scale && (this.scale = scale);
-    parent && (this.parent = parent);
+  constructor({ translation, rotation, scale } = {}, parent) {
+    if (translation) this.translation = translation;
+    if (rotation) this.rotation = rotation;
+    if (scale) this.scale = scale;
+    if (parent) this.parent = parent;
   }
 
   get translation() { return this._translation; }
@@ -207,7 +208,7 @@ class TRS {
 
   get matrix() {
     if (this._changed) {
-      this._calcMatrix(this._matrix);
+      this._calcWorldMatrix(this._matrix);
       this._changed = false;
     }
 
@@ -218,14 +219,13 @@ class TRS {
     this._changed = true;
   }
 
-  _calcMatrix(out) {
-    this._calcMatrixRaw(out);
-    if (this.parent) {
+  _calcWorldMatrix(out) {
+    this._calcLocalMatrix(out);
+    if (this.parent) 
       mat4.mul(out, this.parent.matrix, out);
-    }
   }
 
-  _calcMatrixRaw(out) {
+  _calcLocalMatrix(out) {
     mat4.fromRotationTranslationScale(out, 
       this.rotation, this.translation, this.scale);
   }
@@ -253,34 +253,30 @@ const glTF = {
     }
 
     *[Symbol.iterator]() {
-      for (const node of this.nodes) {
+      for (const node of this.nodes)
         yield node;
-      }
     }
   },
 
   NodeTree: class {
-    constructor(root, children, nodes) {
-      this.root = root;
-      this.children = children;
+    constructor(nodes, children, root) {
       this.nodes = nodes;
+      this.children = children;
+      this.root = root;
     }
 
     static from({ scene, scenes, nodes }) {
-      return new glTF.NodeTree(null, scenes[scene].nodes, nodes);
+      return new glTF.NodeTree(nodes, scenes[scene].nodes);
     }
 
     traverse(cb) {
       for (const index of this.children) {
         const { children, ...rest } = this.nodes[index];
         cb && cb(rest, this.root);
-        
-        if (children) {
-          const subTree = new glTF.NodeTree(rest, 
-            children, this.nodes);
 
-          subTree.traverse(cb);
-        }
+        if (children)
+          new glTF.NodeTree(this.nodes, children, rest)
+            .traverse(cb);
       }
     }
   },
@@ -365,31 +361,47 @@ const glTF = {
 
 Array.prototype.remove = function(item) {
   const index = this.indexOf(item);
-  ~index && this.splice(index, 1);
+  if (~index) this.splice(index, 1);
 };
+
+// Так изображения не кешируются
+async function loadImg(file) {
+  const res = await fetch(file);
+  const obj = await res.blob();
+  return createImg(URL.createObjectURL(obj));
+}
+
+function createImg(src) {
+  const img = new Image();
+  img.src = src;
+  return img;
+}
 
 // -----------------
 
-class Drawable {
-  _canDraw = false;
+class Renderer {
+  _isReady = false;
 
-  draw(appProps, deltaTime) {
-    if (this._canDraw) {
-      this._draw(appProps, deltaTime);
+  render(appProps, deltaTime) {
+    if (this._isReady) {
+      this._render(appProps, deltaTime);
       return;
     }
 
-    this._beforeDraw?.(appProps);
-    this._canDraw = true;
+    this._beforeRender?.(appProps);
+    this._isReady = true;
   }
 
-  _draw(appProps, deltaTime) {
+  _render(appProps, deltaTime) {
     throw new Error('Not implemented');
   }
 }
 
-class Scene extends Drawable {
-  actors = [];
+class SceneBase extends Renderer {
+  constructor(actors = []) {
+    super();
+    this.actors = actors;
+  }
 
   addActor(actor) {
     this.actors.push(actor);
@@ -403,22 +415,34 @@ class Scene extends Drawable {
     return this.actors.find(actor => actor.name === name);
   }
 
-  draw(appProps, deltaTime) {
-    super.draw(appProps, deltaTime);
-    for (const actor of this.actors) {
-      actor.draw(appProps, deltaTime);
-    }
+  render(appProps, deltaTime) {
+    super.render(appProps, deltaTime);
+    for (const actor of this.actors)
+      actor.render(appProps, deltaTime);
   }
 }
 
-class MyScene extends Scene {
-  _beforeDraw({ gl, prog }) {
+class Scene extends SceneBase {
+  constructor(texAtlas, actors) {
+    super(actors);
+    this.texAtlas = texAtlas;
+  }
+
+  _beforeRender({ gl, prog }) {
+    // Если использовать текстурный атлас, 
+    // то он будет только один на всю сцену.
+    // Возможно могут быть проблемы с мипмапами.
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, 
+      gl.UNSIGNED_BYTE, this.texAtlas);
+    gl.generateMipmap(gl.TEXTURE_2D);
+
     gl.clearColor(0.0, 0.0, 0.14, 1.0);
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(prog);
   }
 
-  _draw({ canvas, gl, prog, matrices }) {
+  _render({ canvas, gl, prog, matrices }) {
     const { width, height } = canvas;
 
     gl.viewport(0, 0, width, height);
@@ -432,7 +456,7 @@ class MyScene extends Scene {
   }
 }
 
-class Actor extends Drawable {
+class Actor extends Renderer {
   isHidden = false;
 
   constructor(name, trs) {
@@ -441,10 +465,9 @@ class Actor extends Drawable {
     this.trs = trs;
   }
 
-  draw(appProps, deltaTime) {
-    if (!this.isHidden) {
-      super.draw(appProps, deltaTime);
-    }
+  render(appProps, deltaTime) {
+    if (!this.isHidden)
+      super.render(appProps, deltaTime);
   }
 } 
 
@@ -464,13 +487,12 @@ class Mesh extends Actor {
     return this.glTFScene.findNode(name);
   }
 
-  _beforeDraw() {
-    for (const { trs } of this.glTFScene) {
+  _beforeRender() {
+    for (const { trs } of this.glTFScene)
       if (!trs.parent) trs.parent = this.trs;
-    }
   }
 
-  _draw({ gl, prog, matrices, store }) {
+  _render({ gl, prog, matrices, store }) {
     for (const { trs, mesh } of this.glTFScene) {
       mat4.identity(matrices.modelView);
       mat4.mul(matrices.modelView, matrices.modelView, trs.matrix);
@@ -480,9 +502,10 @@ class Mesh extends Actor {
       mat4.transpose(matrices.normal, matrices.modelView);
       gl.uniformMatrix4fv(prog.u_NMatrix, false, matrices.normal);
 
-      for (const { vbo, nbo, ibo } of mesh) {
+      for (const { vbo, nbo, tbo, ibo } of mesh) {
         glu.setAttribute(gl, store[this.accessor], prog.a_Position, vbo);
         glu.setAttribute(gl, store[this.accessor], prog.a_Normal, nbo);
+        glu.setAttribute(gl, store[this.accessor], prog.a_Texcoord, tbo);
 
         gl.bindBuffer(
           gl.ELEMENT_ARRAY_BUFFER, 
@@ -501,12 +524,12 @@ class Tank extends Mesh {
       (this._tower = this.findNode('Tower'));
   }
 
-  _beforeDraw(appProps) {
+  _beforeRender(appProps) {
     this.trs.translation = [0.0, -3, -12.0];
-    super._beforeDraw(appProps);
+    super._beforeRender(appProps);
   }
 
-  _draw(appProps, deltaTime) {
+  _render(appProps, deltaTime) {
     const q = quat.create();
     const q2 = quat.create();
 
@@ -516,7 +539,7 @@ class Tank extends Mesh {
     quat.rotateY(q2, this.tower.trs.rotation, -deltaTime * 2);
     this.tower.trs.rotation = q2;
 
-    super._draw(appProps, deltaTime);
+    super._render(appProps, deltaTime);
   }
 }
 
@@ -558,14 +581,14 @@ const app = {
     store: {}, 
   },
 
-  run(drawable) {
+  run(renderer) {
     let startTime = performance.now();
 
     (function fn(elapsedTime) {
       const deltaTime = elapsedTime - startTime;
       startTime = elapsedTime;
 
-      drawable.draw(app.props, deltaTime / 1000);
+      renderer.render(app.props, deltaTime / 1000);
 
       requestAnimationFrame(fn);
     })(startTime);
@@ -577,10 +600,12 @@ function getProgram(gl) {
 
   prog.a_Position = gl.getAttribLocation(prog, "a_Position");
   prog.a_Normal = gl.getAttribLocation(prog, "a_Normal");
+  prog.a_Texcoord = gl.getAttribLocation(prog, "a_Texcoord");
 
   prog.u_PMatrix = gl.getUniformLocation(prog, "u_PMatrix");
   prog.u_MVMatrix = gl.getUniformLocation(prog, "u_MVMatrix");
   prog.u_NMatrix = gl.getUniformLocation(prog, "u_NMatrix");
+  prog.u_Sampler = gl.getUniformLocation(prog, "u_Sampler");
 
   prog.u_AmbientColor = gl.getUniformLocation(prog, "u_AmbientColor");
   prog.u_DirectionalColor = gl.getUniformLocation(prog, "u_DirectionalColor");
@@ -609,14 +634,29 @@ function getProgram(gl) {
 
 // -----------------
 
-glTF.loadScene('tank').then(scene => {
-  app.props.store[scene.id] = {};
-  return scene;
-}).then(scene => {
-  const ms = new MyScene();
-  ms.addActor(new Tank('tank', new TRS({}), scene));
-  app.run(ms);
+const gltfList = ['tank'];
+const texAtlas = 'textures/scene2.jpg';
+
+Promise.all([
+  ...gltfList.map(path => glTF.loadScene(path)), 
+  loadImg(texAtlas),
+
+]).then(res => {
+  const texAtlas = res.pop();
+
+  for (const glTFScene of res)
+    app.props.store[glTFScene.id] = {};
+
+  return { texAtlas, glTFScenes: res };
+
+}).then(( { texAtlas, glTFScenes } ) => {
+  const scene = new Scene(texAtlas);
+  for (const glTFScene of glTFScenes)
+    scene.addActor(new Tank('tank', new TRS(), glTFScene));
+
+  app.run(scene);
 });
+
 
 // -----------------
 
