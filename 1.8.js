@@ -66,84 +66,6 @@ const glu = {
 //   }
 // }
 
-// class TRS {
-//   _matrix = mat4.create();
-//   _modified = false;
-
-//   _translation = [0, 0, 0];
-//   _rotation = [0, 0, 0, 1];
-//   _scale = [1, 1, 1];
-//   _parent = null;
-
-//   constructor(...args) {
-//     this._constructor(...args);
-//     this.on('change', () => this._modified = true);
-//   }
-
-//   _constructor({ translation, rotation, scale }, parent) {
-//     translation && (this.translation = translation);
-//     rotation && (this.rotation = rotation);
-//     scale && (this.scale = scale);
-//     parent && (this.parent = parent);
-//   }
-
-//   get translation() { return this._translation; }
-//   set translation(value) {
-//     this._translation = value;
-//     this._change();
-//   }
-
-//   get rotation() { return this._rotation; }
-//   set rotation(value) {
-//     this._rotation = value;
-//     this._change();
-//   }
-
-//   get scale() { return this._scale; }
-//   set scale(value) {
-//     this._scale = value;
-//     this._change();
-//   }
-
-//   get parent() { return this._parent; }
-//   set parent(value) {
-//     const handler = this._change.bind(this);
-//     this._parent?.off('change', handler);
-//     if (this._parent = value) {
-//       this._parent.on('change', handler);
-//     }
-
-//     this._change();
-//   }
-
-//   get matrix() {
-//     if (this._modified) {
-//       this._calcMatrix(this._matrix);
-//       this._modified = false;
-//     }
-
-//     return this._matrix;
-//   }
-
-//   _calcMatrix(out) {
-//     this._calcMatrixRaw(out);
-//     if (this.parent) {
-//       mat4.mul(out, this.parent.matrix, out);
-//     }
-//   }
-
-//   _calcMatrixRaw(out) {
-//     mat4.fromRotationTranslationScale(out, 
-//       this.rotation, this.translation, this.scale);
-//   }
-
-//   _change() {
-//     this.trigger('change');
-//   }
-// }
-
-// Object.assign(TRS.prototype, eventMixin);
-
 class TRS {
   _matrix = mat4.create();
   _changed = false;
@@ -504,6 +426,10 @@ class Mesh extends Actor {
         glu.setAttribute(gl, store[this.accessor], prog.a_Position, vbo);
         glu.setAttribute(gl, store[this.accessor], prog.a_Normal, nbo);
         glu.setAttribute(gl, store[this.accessor], prog.a_Texcoord, tbo);
+
+        // Как и activeTexture(), похоже вызывать 
+        // не обязательное при работе с одной текстурой
+        gl.uniform1i(prog.u_Sampler, 0);
 
         gl.bindBuffer(
           gl.ELEMENT_ARRAY_BUFFER, 
