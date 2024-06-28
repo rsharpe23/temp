@@ -1,7 +1,5 @@
 const { mat4, quat } = glMatrix;
 
-const listMixin = {};
-
 const glu = {
   createProgram(gl, vs, fs) {
     const prog = gl.createProgram();
@@ -519,6 +517,9 @@ class Mesh extends Actor {
 
 class Tank extends Mesh {
   _tower = null;
+  _q = quat.create();
+  _q2 = quat.create();
+
   get tower() {
     return this._tower ?? 
       (this._tower = this.findNode('Tower'));
@@ -530,14 +531,11 @@ class Tank extends Mesh {
   }
 
   _render(appProps, deltaTime) {
-    const q = quat.create();
-    const q2 = quat.create();
+    quat.rotateY(this._q, this.trs.rotation, deltaTime);
+    this.trs.rotation = this._q;
 
-    quat.rotateY(q, this.trs.rotation, deltaTime);
-    this.trs.rotation = q;
-
-    quat.rotateY(q2, this.tower.trs.rotation, -deltaTime * 2);
-    this.tower.trs.rotation = q2;
+    quat.rotateY(this._q2, this.tower.trs.rotation, -deltaTime * 2);
+    this.tower.trs.rotation = this._q2;
 
     super._render(appProps, deltaTime);
   }
@@ -566,6 +564,7 @@ const util = {
   }
 };
 
+const fps = document.querySelector('.fps');
 const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 
@@ -588,11 +587,19 @@ const app = {
       const deltaTime = elapsedTime - startTime;
       startTime = elapsedTime;
 
-      renderer.render(app.props, deltaTime / 1000);
-
+      app.updateFPS(elapsedTime, deltaTime);
+      renderer.render(app.props, deltaTime * 0.001);
+      
       requestAnimationFrame(fn);
     })(startTime);
-  }
+  },
+
+  updateFPS(elapsedTime, deltaTime) {
+    if (elapsedTime % 300 < 25) {
+      const value = 1 / deltaTime * 1000;
+      fps.textContent = `FPS: ${Math.trunc(value)}`;
+    }
+  },
 };
 
 function getProgram(gl) {
@@ -613,7 +620,7 @@ function getProgram(gl) {
   prog.u_LightingPos = gl.getUniformLocation(prog, "u_LightingPos");
 
   prog.u_MaterialAmbientColor = gl.getUniformLocation(prog, "u_MaterialAmbientColor");
-  prog.u_MaterialDiffuseColor = gl.getUniformLocation(prog, "u_MaterialDiffuseColor");
+  // prog.u_MaterialDiffuseColor = gl.getUniformLocation(prog, "u_MaterialDiffuseColor");
   prog.u_MaterialSpecularColor = gl.getUniformLocation(prog, "u_MaterialSpecularColor");
 
   prog.setLightUniforms = () => {
@@ -625,7 +632,7 @@ function getProgram(gl) {
 
   prog.setMaterialUniforms = () => {
     gl.uniform3f(prog.u_MaterialAmbientColor, 0.0, 0.0, 0.0);
-    gl.uniform3f(prog.u_MaterialDiffuseColor, 0.2, 0.6, 0.4);
+    // gl.uniform3f(prog.u_MaterialDiffuseColor, 0.2, 0.6, 0.4);
     gl.uniform3f(prog.u_MaterialSpecularColor, 0.8, 0.8, 0.8);
   };
 
@@ -656,7 +663,6 @@ Promise.all([
 
   app.run(scene);
 });
-
 
 // -----------------
 

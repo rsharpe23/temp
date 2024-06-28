@@ -37,7 +37,7 @@
     uniform vec3 u_LightingPos;
 
     uniform vec3 u_MaterialAmbientColor;
-    uniform vec3 u_MaterialDiffuseColor;
+    // uniform vec3 u_MaterialDiffuseColor;
     uniform vec3 u_MaterialSpecularColor;
 
     varying vec3 v_Color;
@@ -66,12 +66,12 @@
       //   + u_DirectionalColor * u_MaterialDiffuseColor * lambertTerm 
       //   + u_SpecularColor * u_MaterialSpecularColor * specular;
 
+      v_Texcoord = a_Texcoord;
+
       v_Color = u_AmbientColor * u_MaterialAmbientColor 
         + u_DirectionalColor * lambertTerm 
         + u_SpecularColor * u_MaterialSpecularColor * specular;
 
-      v_Texcoord = a_Texcoord;
-      
       gl_Position = u_PMatrix * vertexPos4;
     }
   </script>

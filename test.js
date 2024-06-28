@@ -139,12 +139,12 @@ function render(elapsedTime) {
   // }
 }
 
-let time = performance.now();
+let startTime = performance.now();
 
 (function fn(elapsedTime) {
-  const deltaTime = elapsedTime - time;
+  const deltaTime = elapsedTime - startTime;
   const fps = 1 / deltaTime * 1000;
-  time = elapsedTime;
+  startTime = elapsedTime;
 
   if (canUpdateFPS(elapsedTime)) {
     fpsElem.textContent = `FPS: ${Math.trunc(fps)}`;
