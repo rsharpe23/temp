@@ -427,8 +427,9 @@ class Mesh extends Actor {
         glu.setAttribute(gl, store[this.accessor], prog.a_Normal, nbo);
         glu.setAttribute(gl, store[this.accessor], prog.a_Texcoord, tbo);
 
-        // Как и activeTexture(), похоже вызывать 
-        // не обязательное при работе с одной текстурой
+        // Как и activeTexture(), вызывать не обязательное при работе 
+        // с одной текстурой, т.к. в шейдере униформа и так по умолчанию 
+        // примет значение 0 (только для мультитекстурирования)
         gl.uniform1i(prog.u_Sampler, 0);
 
         gl.bindBuffer(
